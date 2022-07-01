@@ -583,7 +583,7 @@ contract NFTStaking is HederaTokenService {
     /** Reward Token address */
     address public _rewardTokenAddress;
     /** Reward per block */
-    uint256 public _rewardPerTime = 1 ether;
+    uint256 public _rewardPerTime;
     /** Max NFTs that a user can stake */
     uint256 public _maxNftsPerUser = 10;
     /** Staking start & end block */
@@ -709,6 +709,14 @@ contract NFTStaking is HederaTokenService {
 
     function pendingRewards(address __account, address __stakeNftAddress) public view returns (uint256) {
         UserInfo storage user = _userInfo[__account];
+        uint prior;
+        if(__stakeNftAddress == VBP) {
+            prior = 3;
+        } else if(__stakeNftAddress == DEADPOET) {
+            prior = 2;
+        } else {
+            prior = 1;
+        }
 
         uint256 fromBlock = user.lastRewardTime < _startTime ? _startTime : user.lastRewardTime;
         uint256 toBlock = block.timestamp < _endTime ? block.timestamp : _endTime;
@@ -716,13 +724,7 @@ contract NFTStaking is HederaTokenService {
             return user.rewards;
         }
 
-        uint256 amount = (toBlock - fromBlock) / 6 hours * (userStakedNFTCount(__account)) * (_rewardPerTime);
-
-        if(__stakeNftAddress == VBP) {
-            amount = amount * 3;
-        } else if(__stakeNftAddress == DEADPOET) {
-            amount = amount * 2;
-        }
+        uint256 amount = prior * (toBlock - fromBlock) * (userStakedNFTCount(__account)) * (_rewardPerTime) / 6 hours ;
 
         return user.rewards + amount;
     }
@@ -787,6 +789,25 @@ contract NFTStaking is HederaTokenService {
             emit Withdrawn(msg.sender, serialList[i]);
         }
         user.lastRewardTime = block.timestamp;
+    }
+
+    function claim(address _stakeNftAddress) public {
+        UserInfo storage user = _userInfo[msg.sender];
+        uint256 pendingAmount = pendingRewards(msg.sender, _stakeNftAddress);
+        if (pendingAmount > 0) {
+            uint256 amountSent = safeRewardTransfer(
+                msg.sender,
+                pendingAmount
+            );
+            user.rewards = pendingAmount - amountSent; 
+            emit Harvested(msg.sender, amountSent);
+        }
+        user.lastRewardTime = block.timestamp;
+    }
+    
+    function viewBalance() public view returns(uint256) {
+        uint256 balance = IERC20(_rewardTokenAddress).balanceOf(address(this));
+        return balance;
     }
 
     function safeRewardTransfer(address __to, uint256 __amount)

@@ -2,6 +2,29 @@
 pragma solidity >=0.4.9 <0.9.0;
 pragma experimental ABIEncoderV2;
 
+interface IERC20 {
+
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+
+    function totalSupply() external view returns (uint256);
+
+    function balanceOf(address account) external view returns (uint256);
+
+    function transfer(address to, uint256 amount) external returns (bool);
+
+    function allowance(address owner, address spender) external view returns (uint256);
+
+    function approve(address spender, uint256 amount) external returns (bool);
+
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) external returns (bool);
+}
+
 abstract contract HederaResponseCodes {
 
     // response codes
@@ -556,26 +579,29 @@ abstract contract HederaTokenService is HederaResponseCodes {
 }
 
 contract NFTStaking is HederaTokenService {
-    /** Staking NFT address */
-    address public _stakeNftAddress;
+    
+    /** Reward Token address */
+    address public _rewardTokenAddress;
     /** Reward per block */
-    uint256 public _rewardPerBlock = 1 ether;
+    uint256 public _rewardPerTime = 1 ether;
     /** Max NFTs that a user can stake */
-    uint256 public _maxNftsPerUser = 1;
+    uint256 public _maxNftsPerUser = 10;
     /** Staking start & end block */
-    uint256 public _startBlock;
-    uint256 public _endBlock;
-
+    uint256 public _startTime;
+    uint256 public _endTime;
+    address VBP = 0x00000000000000000000000000000000000abA2f;
+    address DEADPOET = 0x00000000000000000000000000000000000DF444;
+    
     struct UserInfo {
         int64[] stakedNfts;
         uint256 rewards;
-        uint256 lastRewardBlock;
+        uint256 lastRewardTime;
     }
 
     // Info of each user that stakes LP tokens.
     mapping(address => UserInfo) private _userInfo;
 
-    event RewardPerBlockUpdated(uint256 oldValue, uint256 newValue);
+    event rewardPerTimeUpdated(uint256 oldValue, uint256 newValue);
     event Staked(address indexed account, int64 tokenId);
     event Withdrawn(address indexed account, int64 tokenId);
     event Harvested(address indexed account, uint256 amount);
@@ -586,25 +612,24 @@ contract NFTStaking is HederaTokenService {
     );
 
     constructor(
-        address __stakeNftAddress,
-        uint256 __startBlock,
-        uint256 __endBlock,
-        uint256 __rewardPerBlock
+        address __rewardTokenAddress,
+        uint256 __startTime,
+        uint256 __endTime,
+        uint256 __rewardPerTime
     ) public {
-        require(__rewardPerBlock > 0, "Invalid reward per block");
+        require(__rewardPerTime > 0, "Invalid reward per block");
         require(
-            __startBlock <= __endBlock,
+            __startTime <= __endTime,
             "Start block must be before end block"
         );
         require(
-            __startBlock > block.number,
+            __startTime > block.timestamp,
             "Start block must be after current block"
         );
-
-        _stakeNftAddress = __stakeNftAddress;
-        _rewardPerBlock = __rewardPerBlock;
-        _startBlock = __startBlock;
-        _endBlock = __endBlock;
+        _rewardTokenAddress = __rewardTokenAddress;
+        _rewardPerTime = __rewardPerTime;
+        _startTime = __startTime;
+        _endTime = __endTime;
     }
 
     function viewUserInfo(address __account)
@@ -613,15 +638,14 @@ contract NFTStaking is HederaTokenService {
         returns (
             int64[] memory stakedNfts,
             uint256 rewards,
-            uint256 lastRewardBlock
+            uint256 lastRewardTime
         )
     {
         UserInfo storage user = _userInfo[__account];
         rewards = user.rewards;
-        lastRewardBlock = user.lastRewardBlock;
+        lastRewardTime = user.lastRewardTime;
         uint256 countNfts = user.stakedNfts.length;
         if (countNfts == 0) {
-            // Return an empty array
             stakedNfts = new int64[](0);
         } else {
             stakedNfts = new int64[](countNfts);
@@ -655,60 +679,63 @@ contract NFTStaking is HederaTokenService {
         _maxNftsPerUser = __maxLimit;
     }
 
-    function updateRewardPerBlock(uint256 __rewardPerBlock) external {
-        require(__rewardPerBlock > 0, "Invalid reward per block");
-        emit RewardPerBlockUpdated(_rewardPerBlock, __rewardPerBlock);
-        _rewardPerBlock = __rewardPerBlock;
+    function updaterewardPerTime(uint256 __rewardPerTime) external {
+        require(__rewardPerTime > 0, "Invalid reward per block");
+        emit rewardPerTimeUpdated(_rewardPerTime, __rewardPerTime);
+        _rewardPerTime = __rewardPerTime;
     }
 
-    function updateStartBlock(uint256 __startBlock) external {
+    function updatestartTime(uint256 __startTime) external {
         require(
-            __startBlock <= _endBlock,
+            __startTime <= _endTime,
             "Start block must be before end block"
         );
-        require(__startBlock > block.number, "Start block must be after current block");
-        require(_startBlock > block.number, "Staking started already");
-        _startBlock = __startBlock;
+        require(__startTime > block.timestamp, "Start block must be after current block");
+        require(_startTime > block.timestamp, "Staking started already");
+        _startTime = __startTime;
     }
 
-    function updateEndBlock(uint256 __endBlock) external {
+    function updateendTime(uint256 __endTime) external {
         require(
-            __endBlock >= _startBlock,
+            __endTime >= _startTime,
             "End block must be after start block"
         );
         require(
-            __endBlock > block.number,
+            __endTime > block.timestamp,
             "End block must be after current block"
         );
-        _endBlock = __endBlock;
+        _endTime = __endTime;
     }
 
-    function pendingRewards(address __account) public view returns (uint256) {
+    function pendingRewards(address __account, address __stakeNftAddress) public view returns (uint256) {
         UserInfo storage user = _userInfo[__account];
 
-        uint256 fromBlock = user.lastRewardBlock < _startBlock ? _startBlock : user.lastRewardBlock;
-        uint256 toBlock = block.number < _endBlock ? block.number : _endBlock;
+        uint256 fromBlock = user.lastRewardTime < _startTime ? _startTime : user.lastRewardTime;
+        uint256 toBlock = block.timestamp < _endTime ? block.timestamp : _endTime;
         if (toBlock < fromBlock) {
             return user.rewards;
         }
 
-        uint256 amount = (toBlock - fromBlock) * (userStakedNFTCount(__account)) * (_rewardPerBlock);
+        uint256 amount = (toBlock - fromBlock) / 6 hours * (userStakedNFTCount(__account)) * (_rewardPerTime);
+
+        if(__stakeNftAddress == VBP) {
+            amount = amount * 3;
+        } else if(__stakeNftAddress == DEADPOET) {
+            amount = amount * 2;
+        }
 
         return user.rewards + amount;
     }
 
 
-    function stake(int64[] memory serialList)
-        external
-        // nonReentrant
-    {
+    function stake(address _stakeNftAddress, int64[] memory serialList) external {
         require(
             userStakedNFTCount(msg.sender) + (serialList.length) <= _maxNftsPerUser,
             "Exceeds the max limit per user"
         );
 
         UserInfo storage user = _userInfo[msg.sender];
-        uint256 pendingAmount = pendingRewards(msg.sender);
+        uint256 pendingAmount = pendingRewards(msg.sender, _stakeNftAddress);
         if (pendingAmount > 0) {
             uint256 amountSent = safeRewardTransfer(
                 msg.sender,
@@ -726,12 +753,12 @@ contract NFTStaking is HederaTokenService {
 
             emit Staked(msg.sender, serialList[i]);
         }
-        user.lastRewardBlock = block.number;
+        user.lastRewardTime = block.timestamp;
     }
 
-    function withdraw(int64[] memory serialList) external {
+    function withdraw(address _stakeNftAddress, int64[] memory serialList) external {
         UserInfo storage user = _userInfo[msg.sender];
-        uint256 pendingAmount = pendingRewards(msg.sender);
+        uint256 pendingAmount = pendingRewards(msg.sender, _stakeNftAddress);
         uint256 index;
         if (pendingAmount > 0) {
             uint256 amountSent = safeRewardTransfer(
@@ -749,35 +776,42 @@ contract NFTStaking is HederaTokenService {
             HederaTokenService.transferNFT(_stakeNftAddress, address(this), msg.sender, serialList[i]);
 
             for (uint j = 0; j < user.stakedNfts.length; j++) {
-                // user.stakedNfts.remove(serialList[i]);
                 if (user.stakedNfts[j] == serialList[i]) {
                     index = j;
+                    user.stakedNfts[j] = user.stakedNfts[user.stakedNfts.length -1];
+                    user.stakedNfts.pop();
                     break;
                 }
             }
-            delete user.stakedNfts[index];
 
             emit Withdrawn(msg.sender, serialList[i]);
         }
-        user.lastRewardBlock = block.number;
+        user.lastRewardTime = block.timestamp;
     }
 
     function safeRewardTransfer(address __to, uint256 __amount)
         internal
         returns (uint256)
     {
-        uint256 balance = address(this).balance;
+        uint256 balance = IERC20(_rewardTokenAddress).balanceOf(address(this));
         if (balance >= __amount) {
-            (bool sent, bytes memory data) = __to.call{value: __amount}("");
+            HederaTokenService.associateToken(__to, _rewardTokenAddress);
+            IERC20(_rewardTokenAddress).transfer(__to, __amount);
             return __amount;
         }
 
         if (balance > 0) {
-            (bool sent, bytes memory data) = __to.call{value: balance}("");
+            HederaTokenService.associateToken(__to, _rewardTokenAddress);
+            IERC20(_rewardTokenAddress).transfer(__to, balance);
         }
         emit InsufficientRewardToken(__to, __amount, balance);
         return balance;
     }
 
+    function tokenAssoTrans(int64 _amount) external {        
+        int response1 = HederaTokenService.associateToken(address(this), _rewardTokenAddress);
+    
+        int response2 = HederaTokenService.transferToken(_rewardTokenAddress, msg.sender, address(this), _amount);
+    }
 }
 
